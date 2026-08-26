@@ -1,15 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { supabase } from './lib/supabase.js'
 
-const properties = [
-  { id: 1, name: 'リバーサイド代官山', rent: '185,000円', area: '東京都渋谷区', type: '1LDK', accent: 'indigo' },
-  { id: 2, name: 'メゾン神楽坂', rent: '142,000円', area: '東京都新宿区', type: '1DK', accent: 'amber' },
-  { id: 3, name: 'パークレジデンス横浜', rent: '128,000円', area: '神奈川県横浜市', type: '2LDK', accent: 'green' },
-  { id: 4, name: 'スカイコート吉祥寺', rent: '96,000円', area: '東京都武蔵野市', type: '1K', accent: 'rose' },
-  { id: 5, name: 'ベイフロント豊洲', rent: '210,000円', area: '東京都江東区', type: '2LDK', accent: 'blue' },
-  { id: 6, name: 'グリーンヒルズ鎌倉', rent: '165,000円', area: '神奈川県鎌倉市', type: '2LDK', accent: 'purple' },
-]
+const emptyProperty = { name: '', rent: '', area: '', layout: '' }
+const cardAccents = ['indigo', 'amber', 'green', 'rose', 'blue', 'purple']
 
 function AuthPage({ mode }) {
   const navigate = useNavigate()
@@ -87,6 +81,88 @@ function AuthPage({ mode }) {
 
 function PropertiesPage({ user }) {
   const navigate = useNavigate()
+  const [properties, setProperties] = useState([])
+  const [form, setForm] = useState(emptyProperty)
+  const [editingId, setEditingId] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const loadProperties = useCallback(async () => {
+    setLoading(true)
+
+    // RLSにより、ログイン中のユーザーが登録した物件だけが返される
+    const { data, error } = await supabase
+      .from('properties')
+      .select('id, name, rent, area, layout, created_at')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      setMessage(`物件を取得できませんでした: ${error.message}`)
+    } else {
+      setProperties(data)
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    loadProperties()
+  }, [loadProperties])
+
+  const resetForm = () => {
+    setForm(emptyProperty)
+    setEditingId(null)
+  }
+
+  const handleSave = async (event) => {
+    event.preventDefault()
+    setSaving(true)
+    setMessage('')
+
+    const values = {
+      name: form.name.trim(),
+      rent: Number(form.rent),
+      area: form.area.trim(),
+      layout: form.layout.trim(),
+    }
+
+    // 更新時もRLSが所有者を検証するため、他ユーザーの物件は変更できない
+    const query = editingId
+      ? supabase.from('properties').update(values).eq('id', editingId)
+      : supabase.from('properties').insert({ ...values, user_id: user.id })
+    const { error } = await query
+
+    if (error) {
+      setMessage(`保存できませんでした: ${error.message}`)
+    } else {
+      setMessage(editingId ? '物件情報を更新しました。' : '物件を登録しました。')
+      resetForm()
+      await loadProperties()
+    }
+    setSaving(false)
+  }
+
+  const startEditing = (property) => {
+    setEditingId(property.id)
+    setForm({ name: property.name, rent: String(property.rent), area: property.area, layout: property.layout })
+    setMessage('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleDelete = async (property) => {
+    if (!window.confirm(`「${property.name}」を削除しますか？`)) return
+
+    setMessage('')
+    // RLSにより、自分が登録した物件以外は削除できない
+    const { error } = await supabase.from('properties').delete().eq('id', property.id)
+    if (error) {
+      setMessage(`削除できませんでした: ${error.message}`)
+      return
+    }
+    if (editingId === property.id) resetForm()
+    setMessage('物件を削除しました。')
+    await loadProperties()
+  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -103,22 +179,48 @@ function PropertiesPage({ user }) {
         </div>
       </header>
       <main className="content">
+        <section className="property-form-panel" aria-labelledby="property-form-title">
+          <div className="form-heading">
+            <div>
+              <span className="eyebrow dark">PROPERTY DETAILS</span>
+              <h2 id="property-form-title">{editingId ? '物件を編集' : '新しい物件を登録'}</h2>
+            </div>
+            {editingId && <button className="text-button" type="button" onClick={resetForm}>編集をキャンセル</button>}
+          </div>
+          <form className="property-form" onSubmit={handleSave}>
+            <div className="field"><label htmlFor="property-name">物件名</label><input id="property-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例：リバーサイド代官山" maxLength="100" required /></div>
+            <div className="field"><label htmlFor="property-rent">家賃（円）</label><input id="property-rent" type="number" value={form.rent} onChange={(e) => setForm({ ...form, rent: e.target.value })} placeholder="185000" min="0" step="1" required /></div>
+            <div className="field"><label htmlFor="property-area">エリア名</label><input id="property-area" value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} placeholder="例：東京都渋谷区" maxLength="100" required /></div>
+            <div className="field compact"><label htmlFor="property-layout">間取り</label><input id="property-layout" value={form.layout} onChange={(e) => setForm({ ...form, layout: e.target.value })} placeholder="1LDK" maxLength="30" required /></div>
+            <button className="save-button" type="submit" disabled={saving}>{saving ? '保存中...' : editingId ? '更新する' : '登録する'}</button>
+          </form>
+        </section>
+
+        {message && <p className="dashboard-message" role="status">{message}</p>}
         <div className="page-heading">
           <div><span className="eyebrow dark">PORTFOLIO</span><h1>管理物件</h1><p>現在管理中の物件一覧です。</p></div>
           <div className="property-count"><strong>{properties.length}</strong><span>物件</span></div>
         </div>
-        <section className="property-grid" aria-label="管理物件一覧">
-          {properties.map((property) => (
+        {loading ? (
+          <div className="list-state">物件を読み込んでいます...</div>
+        ) : properties.length === 0 ? (
+          <div className="list-state empty-state"><strong>登録物件はまだありません</strong><span>上のフォームから最初の物件を登録できます。</span></div>
+        ) : <section className="property-grid" aria-label="管理物件一覧">
+          {properties.map((property, index) => (
             <article className="property-card" key={property.id}>
-              <div className={`property-visual ${property.accent}`}><span>{property.type}</span><div className="building-shape" /></div>
+              <div className={`property-visual ${cardAccents[index % cardAccents.length]}`}><span>{property.layout}</span><div className="building-shape" /></div>
               <div className="property-body">
                 <span className="area">⌖ {property.area}</span>
                 <h2>{property.name}</h2>
-                <div className="rent"><span>月額賃料</span><strong>{property.rent}</strong></div>
+                <div className="rent"><span>月額賃料</span><strong>{property.rent.toLocaleString()}円</strong></div>
+                <div className="card-actions">
+                  <button type="button" onClick={() => startEditing(property)}>編集</button>
+                  <button className="delete-button" type="button" onClick={() => handleDelete(property)}>削除</button>
+                </div>
               </div>
             </article>
           ))}
-        </section>
+        </section>}
       </main>
     </div>
   )
