@@ -19,3 +19,8 @@
 ## 完了報告
 
 - 変更したファイル、実施した検証、コミットおよびプッシュの結果を簡潔に報告する。
+
+## デプロイ情報
+
+- 本番URL：[https://realestate-app-seven-delta.vercel.app](https://realestate-app-seven-delta.vercel.app)
+- Supabaseプロジェクト名：realestate-app
